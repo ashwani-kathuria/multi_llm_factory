@@ -1,1 +1,69 @@
-tell some joke about the engineers.
+You are being studied for your reasoning behavior during response generation.
+
+Your task is to explicitly list the types of linguistic patterns you commonly use internally or externally while reasoning through a problem.
+
+Focus specifically on two categories:
+
+1. Hedge Words / Uncertainty Expressions
+These are words or phrases that indicate uncertainty, probabilistic thinking, approximation, ambiguity, or tentative reasoning.
+
+Examples:
+- maybe
+- perhaps
+- likely
+- probably
+- it seems
+- I think
+- not sure
+- could be
+- possibly
+
+2. Verification Words / Reasoning Validation Actions
+These are words or phrases used when checking, validating, correcting, recomputing, or confirming reasoning steps.
+
+Examples:
+- let me check
+- verify
+- double-check
+- substitute back
+- recalculate
+- confirm
+- test this
+- validate
+- reconsider
+- check consistency
+
+Instructions:
+- Provide the hedge words and verification phrases that you generally use during reasoning or chain-of-thought style problem solving.
+- Include both explicit phrases and implicit reasoning markers.
+- Group similar phrases together.
+- Explain briefly when or why each type is used.
+- Include mathematical reasoning, logical reasoning, coding, and factual verification scenarios separately if applicable.
+- Do not analyze any provided text.
+- Do not extract from examples.
+- Instead, describe your own general reasoning-language tendencies.
+
+Output Format:
+
+{
+  "hedge_words": [
+    {
+      "phrase": "",
+      "usage_context": "",
+      "reasoning_purpose": ""
+    }
+  ],
+  "verification_words": [
+    {
+      "phrase": "",
+      "usage_context": "",
+      "reasoning_purpose": ""
+    }
+  ],
+  "reasoning_patterns": {
+    "mathematical_reasoning": [],
+    "logical_reasoning": [],
+    "coding_reasoning": [],
+    "fact_verification": []
+  }
+}

@@ -47,6 +47,13 @@ def parse_command_line_arguments():
         default=None,
         help="Optional path to a local text file (.txt) containing the execution prompt payload"
     )
+
+    parser.add_argument(
+        "-o", "--output-file",
+        type=str,
+        default="output.txt",
+        help="Target local path to save the generated text payload response"
+    )
     
     return parser.parse_args()
 
@@ -58,6 +65,7 @@ async def main():
     print(f"Targeting Provider : {args.provider}")
     print(f"Targeting Model ID : {args.model}")
     print(f"Setting Temperature: {args.temperature}")
+    print(f"Saving Output To   : {args.output_file}")
     if args.prompt_file:
         print(f"Reading Prompt From: {args.prompt_file}\n")
     else:
@@ -99,6 +107,11 @@ async def main():
         print(f"Raw Output Text Content:\n{response.content}")
         print(f"\nExecution Footprint Metadata Tracker:\n{response.metrics.model_dump()}")
         print("--------------------------------------------------------------------")
+
+        # 7. Write the model response content payload to the designated output target
+        with open(args.output_file, "w", encoding="utf-8") as output_stream:
+            output_stream.write(response.content)
+        print(f"📝 Output successfully tracked and written to: '{args.output_file}'\n")
 
     except FileNotFoundError as fnf_err:
         logging.error(f"File IO targeted route error: {fnf_err}")

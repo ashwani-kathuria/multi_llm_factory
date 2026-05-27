@@ -1,0 +1,76 @@
+{
+  "hedge_words": [
+    {
+      "phrase": "maybe",
+      "usage": "express uncertainty in thought"
+    },
+    {
+      "phrase": "perhaps",
+      "usage": "indicate uncertain belief"
+    },
+    {
+      "phrase": "likely",
+      "usage": "suggest probable outcome or result"
+    },
+    {
+      "phrase": "probably",
+      "usage": "express a tendency to believe something certain"
+    },
+    {
+      "phrase": "it seems",
+      "usage": "indicate tentative conclusion with hesitation"
+    },
+    {
+      "phrase": "could be",
+      "usage": "suggest alternative or possible outcome"
+    },
+    {
+      "phrase": "possibly",
+      "usage": "express uncertainty about something"
+    }
+  ],
+  "verification_words": [
+    {
+      "phrase": "let me check",
+      "usage": "verify reasoning steps and results"
+    },
+    {
+      "phrase": "verify",
+      "usage": "confirm correctness of information or process"
+    },
+    {
+      "phrase": "double-check",
+      "usage": "re repeat calculations to ensure accuracy"
+    },
+    {
+      "phrase": "substitute back",
+      "usage": "check results by substituting values from original problem"
+    },
+    {
+      "phrase": "recalculate",
+      "usage": "redo computations to identify errors
+    },
+    {
+      "phrase": "confirm",
+      "usage": "assert agreement between expected and actual results"
+    },
+    {
+      "phrase": "test this",
+      "usage": "validate a hypothesis or solution by testing it against known data
+    },
+    {
+      "phrase": "validate",
+      "usage": "assure correctness of information through multiple checks
+    },
+    {
+      "phrase": "consider alternative approaches",
+      "usage": "evaluate different methods to ensure robustness
+    }
+  ],
+  "reasoning_patterns": {
+    "mathematical_reasoning": [],
+    "logical_reasoning": [],
+    "coding_reasoning": [],
+    "fact_verification": []
+  }
+}

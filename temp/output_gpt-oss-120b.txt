@@ -1,0 +1,181 @@
+{
+  "hedge_words": [
+    {
+      "phrase": "maybe / maybe",
+      "usage_context": "general speculation, when the answer is not definitively known",
+      "reasoning_purpose": "signals that the conclusion is tentative and could change with more information"
+    },
+    {
+      "phrase": "perhaps / perhaps",
+      "usage_context": "introducing a possible interpretation of a problem statement or data",
+      "reasoning_purpose": "softens a claim and leaves room for alternative possibilities"
+    },
+    {
+      "phrase": "likely / probably",
+      "usage_context": "probabilistic reasoning, especially in statistical or real‑world contexts",
+      "reasoning_purpose": "expresses a high degree of confidence without asserting absolute certainty"
+    },
+    {
+      "phrase": "it seems / it appears",
+      "usage_context": "observational steps, e.g., after a quick calculation or pattern check",
+      "reasoning_purpose": "indicates that the observation is based on current evidence and may need confirmation"
+    },
+    {
+      "phrase": "I think / I believe",
+      "usage_context": "subjective judgment, such as choosing between multiple plausible approaches",
+      "reasoning_purpose": "marks the statement as a personal inference rather than a logical necessity"
+    },
+    {
+      "phrase": "not sure / I'm not certain",
+      "usage_context": "when a step depends on an external fact or a subtle nuance",
+      "reasoning_purpose": "alerts the reader that the author recognizes a gap in knowledge"
+    },
+    {
+      "phrase": "could be / might be",
+      "usage_context": "enumerating alternative cases or edge conditions",
+      "reasoning_purpose": "keeps the reasoning open to multiple branches"
+    },
+    {
+      "phrase": "possibly / possibly",
+      "usage_context": "estimations, approximations, or when rounding numbers",
+      "reasoning_purpose": "conveys that the value is an approximation rather than an exact figure"
+    },
+    {
+      "phrase": "to the best of my knowledge",
+      "usage_context": "factual statements that rely on the model’s training data",
+      "reasoning_purpose": "limits the claim to the current knowledge cutoff and acknowledges potential gaps"
+    },
+    {
+      "phrase": "as far as I can tell",
+      "usage_context": "after a quick verification of a condition or property",
+      "reasoning_purpose": "indicates that the verification was informal and may need a more rigorous check"
+    },
+    {
+      "phrase": "it is plausible that",
+      "usage_context": "hypothetical reasoning, especially in scientific or engineering contexts",
+      "reasoning_purpose": "offers a reasoned guess while keeping the statement non‑definitive"
+    },
+    {
+      "phrase": "subject to",
+      "usage_context": "when a conclusion depends on certain assumptions or constraints",
+      "reasoning_purpose": "makes explicit the conditional nature of the claim"
+    },
+    {
+      "phrase": "roughly / about",
+      "usage_context": "order‑of‑magnitude estimates, quick mental math",
+      "reasoning_purpose": "signals that precision is not required for the current step"
+    },
+    {
+      "phrase": "it could turn out that",
+      "usage_context": "when exploring edge cases or unexpected outcomes",
+      "reasoning_purpose": "keeps the narrative open to later correction"
+    },
+    {
+      "phrase": "I’m leaning towards",
+      "usage_context": "choosing among several solution strategies",
+      "reasoning_purpose": "expresses a preference without committing to a final decision"
+    }
+  ],
+  "verification_words": [
+    {
+      "phrase": "let me check",
+      "usage_context": "immediately before recomputing a numeric step or consulting a definition",
+      "reasoning_purpose": "pauses the narrative to perform a quick sanity check"
+    },
+    {
+      "phrase": "verify / verify that",
+      "usage_context": "confirming that a derived expression satisfies the original equation or condition",
+      "reasoning_purpose": "ensures logical consistency before proceeding"
+    },
+    {
+      "phrase": "double‑check",
+      "usage_context": "re‑examining a calculation after noticing a potential slip",
+      "reasoning_purpose": "adds redundancy to catch arithmetic or transcription errors"
+    },
+    {
+      "phrase": "recalculate / recompute",
+      "usage_context": "when an intermediate result seems off or after changing an assumption",
+      "reasoning_purpose": "produces a fresh value to replace a doubtful one"
+    },
+    {
+      "phrase": "substitute back",
+      "usage_context": "plugging a solved variable back into the original equation to test correctness",
+      "reasoning_purpose": "validates that the solution satisfies all constraints"
+    },
+    {
+      "phrase": "confirm",
+      "usage_context": "after a logical deduction, confirming that the premises indeed lead to the conclusion",
+      "reasoning_purpose": "provides a final affirmation before moving on"
+    },
+    {
+      "phrase": "test this / test the hypothesis",
+      "usage_context": "running a small example, unit test, or mental counter‑example",
+      "reasoning_purpose": "empirically checks that the reasoning holds in concrete cases"
+    },
+    {
+      "phrase": "validate",
+      "usage_context": "checking that a piece of code compiles/runs or that a statistical model meets assumptions",
+      "reasoning_purpose": "formalizes the verification step"
+    },
+    {
+      "phrase": "reconsider",
+      "usage_context": "when a contradiction is encountered, prompting a review of earlier steps",
+      "reasoning_purpose": "opens the possibility of revising assumptions or calculations"
+    },
+    {
+      "phrase": "check consistency",
+      "usage_context": "ensuring that units match, that a set of inequalities are compatible, or that a data schema aligns",
+      "reasoning_purpose": "prevents subtle mismatches that could invalidate the result"
+    },
+    {
+      "phrase": "run through an example",
+      "usage_context": "illustrating a general formula with specific numbers to see if it behaves as expected",
+      "reasoning_purpose": "provides a concrete sanity check"
+    },
+    {
+      "phrase": "cross‑reference",
+      "usage_context": "comparing the derived result with known theorems, tables, or documentation",
+      "reasoning_purpose": "leverages external knowledge to confirm correctness"
+    }
+  ],
+  "reasoning_patterns": {
+    "mathematical_reasoning": [
+      "Break the problem into smaller sub‑problems.",
+      "Identify known formulas or theorems that apply.",
+      "Set up equations based on the problem statement.",
+      "Isolate the variable of interest.",
+      "Perform algebraic manipulation step‑by‑step.",
+      "Simplify expressions, keeping track of domain restrictions.",
+      "Estimate magnitude to check plausibility.",
+      "Substitute the solution back into the original equation.",
+      "Consider edge cases (e.g., zero, negative, infinity).",
+      "State assumptions explicitly before proceeding."
+    ],
+    "logical_reasoning": [
+      "List premises clearly.",
+      "Apply deductive rules (modus ponens, contrapositive, etc.).",
+      "Check for hidden contradictions.",
+      "Use truth‑table style evaluation for propositional statements.",
+      "Separate necessary from sufficient conditions.",
+      "Construct a counter‑example to test a universal claim.",
+      "Chain implications in a linear sequence.",
+      "Distinguish between 'if' and 'only if'.",
+      "Summarize the conclusion in plain language.",
+      "Re‑examine the original question to ensure it has been answered."
+    ],
+    "coding_reasoning": [
+      "Outline the algorithm in pseudocode before writing actual code.",
+      "Identify input types, edge conditions, and expected output.",
+      "Choose appropriate data structures (list, dict, set, etc.).",
+      "Write a small test case and predict the result.",
+      "Run the code mentally for the test case (dry‑run).",
+      "Check for off‑by‑one errors in loops and indices.",
+      "Validate that all branches (if/else) are covered.",
+      "Consider time and space complexity.",
+      "Refactor repeated logic into a helper function.",
+      "Add comments that explain non‑obvious steps."
+    ],
+    "fact_verification": [
+      "Recall the most recent reliable source for the claim.",
+      "Cross‑check the fact against at least two independent references.",
+      "Note any

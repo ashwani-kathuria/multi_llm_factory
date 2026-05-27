@@ -3,6 +3,7 @@ import json
 import logging
 import time
 import asyncio
+import os
 from typing import Any, Dict, Optional, Type
 
 from tenacity import retry, stop_after_attempt, wait_exponential
@@ -332,7 +333,20 @@ class AWSBedrockWrapper(BaseLLMWrapper):
 # ==========================================
 class OllamaLLMWrapper(BaseLLMWrapper):
     def _initialize_client(self) -> Any:
-        return {"sync": ollama.Client(), "async": ollama.AsyncClient()}
+        host = self.config.base_url or os.environ.get("OLLAMA_BASE_URL") or "http://localhost:11434"
+        # normalize: ensure scheme and remove trailing slash
+        if not host.startswith(("http://", "https://")):
+            host = f"http://{host}"
+        host = host.rstrip("/")
+        logger.info(f"Ollama client host resolved: {host}")
+        try:
+            return {
+                "sync": ollama.Client(host=host),
+                "async": ollama.AsyncClient(host=host),
+            }
+        except Exception as exc:
+            logger.error(f"Failed to initialize Ollama client for host {host}: {exc}")
+            raise
 
     def _build_messages(self, prompt: str, system_instruction: Optional[str]) -> list:
         messages = []

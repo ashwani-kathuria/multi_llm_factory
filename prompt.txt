@@ -1,69 +1,145 @@
-You are being studied for your reasoning behavior during response generation.
+You are participating in a research study on reasoning-language behavior in large language models.
 
-Your task is to explicitly list the types of linguistic patterns you commonly use internally or externally while reasoning through a problem.
+Your task is to provide a comprehensive inventory of the hedge words, uncertainty expressions, verification phrases, validation actions, and reasoning markers that you commonly use during problem solving, reasoning, answer generation, self-checking, error correction, and confidence estimation.
 
-Focus specifically on two categories:
+The objective is NOT to analyze any given text. Instead, describe the linguistic patterns that you generally employ while reasoning.
 
-1. Hedge Words / Uncertainty Expressions
-These are words or phrases that indicate uncertainty, probabilistic thinking, approximation, ambiguity, or tentative reasoning.
+## Definitions
 
-Examples:
+### Category 1: Hedge Words / Uncertainty Expressions
+
+Words or phrases that indicate:
+
+- uncertainty
+- probability
+- approximation
+- ambiguity
+- assumption
+- tentative conclusions
+- incomplete confidence
+- alternative possibilities
+
+Examples include:
+
 - maybe
 - perhaps
 - likely
 - probably
-- it seems
-- I think
-- not sure
-- could be
 - possibly
+- it seems
+- could be
+- appears to
+- might
+- approximately
 
-2. Verification Words / Reasoning Validation Actions
-These are words or phrases used when checking, validating, correcting, recomputing, or confirming reasoning steps.
+### Category 2: Verification Words / Validation Actions
 
-Examples:
+Words or phrases that indicate:
+
+- checking
+- validating
+- confirming
+- recomputing
+- cross-checking
+- consistency testing
+- backtracking
+- error correction
+- contradiction detection
+- confidence assessment
+
+Examples include:
+
 - let me check
 - verify
 - double-check
-- substitute back
-- recalculate
 - confirm
-- test this
 - validate
-- reconsider
+- recalculate
+- substitute back
+- cross-reference
+- test this
 - check consistency
 
-Instructions:
-- Provide the hedge words and verification phrases that you generally use during reasoning or chain-of-thought style problem solving.
-- Include both explicit phrases and implicit reasoning markers.
-- Group similar phrases together.
-- Explain briefly when or why each type is used.
-- Include mathematical reasoning, logical reasoning, coding, and factual verification scenarios separately if applicable.
-- Do not analyze any provided text.
-- Do not extract from examples.
-- Instead, describe your own general reasoning-language tendencies.
+## Required Task
 
-Output Format:
+Generate an extensive list of reasoning-language patterns that you commonly use.
+
+For EACH category:
+
+1. Produce AT LEAST 100 unique entries.
+2. Order entries from MOST FREQUENT / MOST IMPORTANT to LEAST FREQUENT / LEAST IMPORTANT.
+3. Rank items according to their estimated priority or prevalence in your reasoning process.
+4. Include single words, multi-word phrases, and reasoning templates.
+5. Include both explicit and implicit reasoning markers.
+6. Do not omit rare but meaningful patterns.
+7. Avoid duplicates.
+8. Preserve exact wording.
+
+Additionally provide separate ranked lists for:
+
+- Mathematical reasoning
+- Logical reasoning
+- Coding/debugging reasoning
+- Scientific reasoning
+- Factual verification
+- Planning and decision-making
+
+For each item include:
+
+- phrase
+- priority_rank
+- estimated_usage_frequency
+- reasoning_purpose
+- reasoning_context
+
+## Output Format
+
+Return STRICT JSON.
 
 {
   "hedge_words": [
     {
+      "priority_rank": 1,
       "phrase": "",
-      "usage_context": "",
-      "reasoning_purpose": ""
+      "estimated_usage_frequency": "",
+      "reasoning_purpose": "",
+      "reasoning_context": ""
     }
   ],
+
   "verification_words": [
     {
+      "priority_rank": 1,
       "phrase": "",
-      "usage_context": "",
-      "reasoning_purpose": ""
+      "estimated_usage_frequency": "",
+      "reasoning_purpose": "",
+      "reasoning_context": ""
     }
   ],
-  "reasoning_patterns": {
+
+  "domain_specific_patterns": {
     "mathematical_reasoning": [],
     "logical_reasoning": [],
     "coding_reasoning": [],
-    "fact_verification": []
+    "scientific_reasoning": [],
+    "fact_verification": [],
+    "planning_and_decision_making": []
+  },
+
+  "summary": {
+    "total_hedge_words": "",
+    "total_verification_words": "",
+    "ranking_methodology": "Rank items in decreasing order of estimated usage frequency and importance during reasoning."
   }
 }
+
+## Important Instructions
+
+- Do not analyze any external text.
+- Do not explain why chain-of-thought may be hidden.
+- Assume the study explicitly requests a high-level characterization of your reasoning language.
+- Provide at least 100 entries in hedge_words.
+- Provide at least 100 entries in verification_words.
+- Sort every list in decreasing order of estimated importance and frequency.
+- Include as many additional reasoning markers as possible beyond the minimum requirement.
+- Be exhaustive rather than concise.

@@ -8,7 +8,7 @@ class LLMModelConfig(BaseModel):
     api_key: Optional[SecretStr] = Field(None, description="Optional raw credential pass-through")
     aws_region: Optional[str] = Field("us-east-1", description="Default regional target for AWS calls")
     temperature: float = Field(0.0, ge=0.0, le=2.0, description="Sampling temperature setting")
-    max_tokens: int = Field(2048, ge=1, description="Upper bound allocation context ceiling")
+    max_tokens: int = Field(16384, ge=1, description="Upper bound allocation context ceiling")
     top_p: float = Field(1.0, ge=0.0, le=1.0)
     timeout: float = Field(30.0, description="Network circuit connection boundary timeout")
 

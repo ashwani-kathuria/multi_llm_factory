@@ -54,6 +54,13 @@ def parse_command_line_arguments():
         default="output.txt",
         help="Target local path to save the generated text payload response"
     )
+
+    parser.add_argument(
+        "-k", "--max-tokens",
+        type=int,
+        default=16384,  # Bumping the default terminal fallback to 4096
+        help="Upper bound token allocation ceiling for the model response"
+    )
     
     return parser.parse_args()
 

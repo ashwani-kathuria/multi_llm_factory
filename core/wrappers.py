@@ -125,7 +125,8 @@ class GoogleGenAIWrapper(BaseLLMWrapper):
             top_p=self.config.top_p,
             system_instruction=system_instruction,
             response_mime_type="application/json" if response_schema else "text/plain",
-            response_schema=response_schema if response_schema else None
+            response_schema=response_schema if response_schema else None,
+            thinking_config=types.ThinkingConfig(include_thoughts=True)
         )
 
     @retry(reraise=True, stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=10))

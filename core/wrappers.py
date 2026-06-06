@@ -150,9 +150,36 @@ class GoogleGenAIWrapper(BaseLLMWrapper):
         )
         p_tok = response.usage_metadata.prompt_token_count if response.usage_metadata else 0
         c_tok = response.usage_metadata.candidates_token_count if response.usage_metadata else 0
+
         metrics = self._log_metrics(start_time, p_tok, c_tok)
-        struct_data = json.loads(response.text) if response_schema and response.text else None
-        return LLMUnifiedResponse(content=response.text or "", structured_json=struct_data, metrics=metrics)
+
+# --- Separate Reasoning Streams From Core Content ---
+        content_chunks = []
+        reasoning_chunks = []
+        
+        if response.candidates and response.candidates[0].content.parts:
+            for part in response.candidates[0].content.parts:
+                if not part.text:
+                    continue
+                # Detect native thinking blocks via the SDK 'thought' attribute
+                if getattr(part, 'thought', False):
+                    reasoning_chunks.append(part.text)
+                else:
+                    content_chunks.append(part.text)
+
+        # Build clean strings from collected chunks
+        final_content = "".join(content_chunks) if content_chunks else (response.text or "")
+        reasoning_text = "".join(reasoning_chunks) if reasoning_chunks else None
+        
+        # Parse structured JSON safely using clean content text
+        struct_data = json.loads(final_content) if response_schema and final_content else None
+        
+        return LLMUnifiedResponse(
+            content=final_content,
+            structured_json=struct_data,
+            metrics=metrics,
+            reasoning_content=reasoning_text  # Passes the isolated thought track down the cascade
+        )
 
 # ==========================================
 # AWS BEDROCK STRATEGY DRIVER

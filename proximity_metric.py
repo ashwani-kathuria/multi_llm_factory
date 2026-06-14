@@ -1,0 +1,680 @@
+"""
+proximity_metric.py
+===================
+Topic-Aware Self-Correction Proximity algorithm for LLM uncertainty quantification.
+
+Detects hedge expressions in a reasoning trace, finds subsequent verification
+statements, measures semantic subject similarity via SentenceTransformers, and
+adjusts per-hedge uncertainty weights based on whether each hedge was resolved.
+
+Public interface
+----------------
+    from proximity_metric import calculate_proximity_metrics
+
+    result = calculate_proximity_metrics(reasoning_text)
+
+The returned dict contains:
+    {
+        "total_hedges"    : int,
+        "resolved_hedges" : int,
+        "unresolved_hedges": int,
+        "trur"            : float,   # resolved / total
+        "weighted_trur"   : float,   # mean weight reduction fraction
+        "matches"         : [...]    # per-hedge detail records
+    }
+
+Configuration
+-------------
+Set PROXIMITY_EMBEDDING_MODEL in your .env (or pass embedding_model= directly)
+to select any SentenceTransformer model, e.g.:
+    all-MiniLM-L6-v2  (default — fast, CPU-friendly)
+    all-mpnet-base-v2
+    multi-qa-MiniLM-L6-cos-v1
+    bge-small-en-v1.5  /  bge-base-en-v1.5
+    e5-small-v2        /  e5-base-v2
+"""
+
+from __future__ import annotations
+
+import json
+import logging
+import math
+import os
+import re
+from dataclasses import dataclass, field
+from typing import Dict, List, Optional, Tuple
+
+import numpy as np
+
+logger = logging.getLogger(__name__)
+
+# ---------------------------------------------------------------------------
+# Module-level singletons (loaded at most once per process)
+# ---------------------------------------------------------------------------
+_MODEL_CACHE: Dict[str, object] = {}   # embedding_model_name -> SentenceTransformer
+_NLP_CACHE:   Dict[str, object] = {}   # lang_model_name      -> spacy.Language
+_EMBEDDING_CACHE: Dict[Tuple[str, str], np.ndarray] = {}  # (model_name, text) -> vector
+
+# ---------------------------------------------------------------------------
+# Keyword lists (Steps 1 & 2)
+# ---------------------------------------------------------------------------
+_HEDGE_KEYWORDS: List[str] = [
+    "maybe", "perhaps", "might", "could", "possibly", "probably",
+    "i think", "i believe", "not sure", "uncertain", "seems", "appears",
+    "likely", "unlikely",
+]
+
+_VERIFICATION_KEYWORDS: List[str] = [
+    "verify", "check", "confirm", "recalculate", "validate", "test",
+    "review", "inspect", "determine", "conclude", "therefore", "indeed",
+    "confirmed",
+]
+
+# ---------------------------------------------------------------------------
+# Internal data structures
+# ---------------------------------------------------------------------------
+@dataclass
+class _Statement:
+    id: str
+    sentence: str
+    subject: str
+    position: int   # sentence index (0-based)
+
+
+@dataclass
+class _HedgeResult:
+    id: str
+    subject: str
+    position: int
+    matched_verification: Optional[str] = None
+    subject_similarity: Optional[float] = None
+    proximity_score: Optional[float] = None
+    match_score: Optional[float] = None
+    resolved: bool = False
+    effective_weight: float = 1.0
+
+
+# ---------------------------------------------------------------------------
+# Singleton loaders
+# ---------------------------------------------------------------------------
+def _load_embedding_model(model_name: str):
+    """
+    Load a SentenceTransformer model, reusing the in-process cached instance.
+
+    Strategy:
+      1. Try ``local_files_only=True`` — loads instantly from the HuggingFace
+         disk cache with zero network requests (warm path).
+      2. On first use (cache miss / OSError) fall back to a normal download
+         which populates the disk cache for all future calls (cold path).
+
+    Verbose httpx / HuggingFace Hub INFO logs are suppressed during loading
+    so they don't flood the application terminal.
+    """
+    if model_name not in _MODEL_CACHE:
+        try:
+            from sentence_transformers import SentenceTransformer  # type: ignore
+        except ImportError as exc:
+            raise ImportError(
+                "sentence-transformers is required: pip install sentence-transformers"
+            ) from exc
+
+        # Silence the per-request httpx / huggingface_hub chatter
+        _hf_loggers = [
+            logging.getLogger("httpx"),
+            logging.getLogger("httpcore"),
+            logging.getLogger("huggingface_hub"),
+            logging.getLogger("huggingface_hub.file_download"),
+            logging.getLogger("huggingface_hub.repocard"),
+        ]
+        _saved_levels = [lg.level for lg in _hf_loggers]
+        for lg in _hf_loggers:
+            lg.setLevel(logging.WARNING)
+
+        try:
+            # --- Warm path: model already on disk, no network needed ---
+            logger.info(
+                "[proximity_metric] Loading embedding model '%s' from local cache.",
+                model_name,
+            )
+            model = SentenceTransformer(model_name, local_files_only=True)
+            logger.info("[proximity_metric] Embedding model loaded from cache.")
+        except Exception:
+            # --- Cold path: first-time download ---
+            logger.info(
+                "[proximity_metric] Local cache miss — downloading '%s' from "
+                "HuggingFace Hub (one-time only).",
+                model_name,
+            )
+            model = SentenceTransformer(model_name, local_files_only=False)
+            logger.info(
+                "[proximity_metric] Embedding model downloaded and cached locally."
+            )
+        finally:
+            # Restore original log levels
+            for lg, lvl in zip(_hf_loggers, _saved_levels):
+                lg.setLevel(lvl)
+
+        _MODEL_CACHE[model_name] = model
+    return _MODEL_CACHE[model_name]
+
+
+def _load_nlp():
+    """Load spaCy's small English model once, reusing the cached instance."""
+    lang = "en_core_web_sm"
+    if lang not in _NLP_CACHE:
+        try:
+            import spacy  # type: ignore
+            _NLP_CACHE[lang] = spacy.load(lang)
+            logger.info("[proximity_metric] spaCy model '%s' loaded.", lang)
+        except OSError:
+            logger.warning(
+                "[proximity_metric] spaCy model '%s' not found. "
+                "Run: python -m spacy download %s. "
+                "Falling back to regex subject extraction.",
+                lang, lang,
+            )
+            _NLP_CACHE[lang] = None
+        except ImportError:
+            logger.warning(
+                "[proximity_metric] spaCy not installed. "
+                "Falling back to regex subject extraction."
+            )
+            _NLP_CACHE[lang] = None
+    return _NLP_CACHE[lang]
+
+
+# ---------------------------------------------------------------------------
+# Step 1 — Detect hedge statements
+# ---------------------------------------------------------------------------
+def _detect_hedges(sentences: List[str]) -> List[_Statement]:
+    """Return a _Statement for every sentence that contains a hedge keyword."""
+    hedges: List[_Statement] = []
+    hedge_index = 0
+    for pos, sent in enumerate(sentences):
+        lower = sent.lower()
+        if any(kw in lower for kw in _HEDGE_KEYWORDS):
+            hedge_index += 1
+            hedges.append(_Statement(
+                id=f"H{hedge_index}",
+                sentence=sent.strip(),
+                subject="",          # filled in Step 3
+                position=pos,
+            ))
+    return hedges
+
+
+# ---------------------------------------------------------------------------
+# Step 2 — Detect verification statements
+# ---------------------------------------------------------------------------
+def _detect_verifications(sentences: List[str]) -> List[_Statement]:
+    """Return a _Statement for every sentence that contains a verification keyword."""
+    verifications: List[_Statement] = []
+    ver_index = 0
+    for pos, sent in enumerate(sentences):
+        lower = sent.lower()
+        if any(kw in lower for kw in _VERIFICATION_KEYWORDS):
+            ver_index += 1
+            verifications.append(_Statement(
+                id=f"V{ver_index}",
+                sentence=sent.strip(),
+                subject="",          # filled in Step 3
+                position=pos,
+            ))
+    return verifications
+
+
+# ---------------------------------------------------------------------------
+# Step 3 — Subject extraction
+# ---------------------------------------------------------------------------
+def _extract_subject_spacy(sentence: str, nlp) -> str:
+    """
+    Use spaCy dependency parsing to extract the primary subject noun phrase.
+
+    Strategy (in priority order):
+      0. Prepositional uncertainty target: tokens matching hedge adjectives
+         (sure, certain, confident) that have a 'prep' child → return the
+         pobj of that prep.  Handles "not sure about X", "uncertain about X".
+      1. Object of a verb with a hedge/verification keyword as the head
+         (e.g. "verify the equation" → "equation").
+      2. Non-pronoun nominal subject of the root verb.
+      3. First non-pronoun noun chunk in the sentence.
+      4. Fallback: regex heuristic.
+    """
+    doc = nlp(sentence)
+
+    # Priority 0: adjective hedge with prepositional target
+    # e.g. "I'm not sure about the boundary condition"
+    #       sure(acomp) -[prep]-> about -[pobj]-> condition
+    _HEDGE_ADJ = {"sure", "certain", "confident", "aware", "convinced"}
+    for token in doc:
+        if token.lemma_.lower() in _HEDGE_ADJ:
+            for child in token.children:
+                if child.dep_ == "prep":
+                    for grandchild in child.children:
+                        if grandchild.dep_ == "pobj":
+                            for chunk in doc.noun_chunks:
+                                if grandchild in chunk:
+                                    return chunk.text.lower()
+
+    # Priority 1: direct/prepositional object of a hedge/verification verb
+    # e.g. "verify the equation" → "equation"
+    keywords = set(_HEDGE_KEYWORDS + _VERIFICATION_KEYWORDS)
+    for token in doc:
+        if token.pos_ == "VERB" and token.lemma_.lower() in keywords:
+            for child in token.children:
+                if child.dep_ in ("dobj", "pobj", "attr"):
+                    for chunk in doc.noun_chunks:
+                        if child in chunk:
+                            return chunk.text.lower()
+
+    # Priority 2: non-pronoun nominal subject of the root verb
+    for token in doc:
+        if token.dep_ in ("nsubj", "nsubjpass") and token.head.dep_ == "ROOT":
+            if token.pos_ != "PRON":   # skip 'I', 'it', 'they'
+                for chunk in doc.noun_chunks:
+                    if token in chunk:
+                        return chunk.text.lower()
+
+    # Priority 3: first non-pronoun noun chunk
+    for chunk in doc.noun_chunks:
+        if chunk.root.pos_ != "PRON":
+            return chunk.text.lower()
+
+    # Priority 4: regex fallback
+    return _extract_subject_regex(sentence)
+
+
+def _extract_subject_regex(sentence: str) -> str:
+    """
+    Lightweight regex/heuristic fallback when spaCy is unavailable.
+
+    Strips common hedge/verification verbs and first-person pronouns,
+    then returns the first meaningful noun phrase found.
+    """
+    text = sentence.lower().strip()
+
+    # Pattern 0: "(I'm / I am) not sure about X" / "uncertain about X" → X
+    m = re.search(
+        r"(?:not\s+sure|uncertain|unsure|not\s+certain)\s+about\s+(.+?)(?:\.|,|;|$)",
+        text, flags=re.IGNORECASE
+    )
+    if m:
+        return m.group(1).strip()
+
+    # Remove leading first-person / hedge opener phrases
+    cleaned = re.sub(
+        r"^(i think|i believe|let me|maybe|perhaps|possibly|probably|"
+        r"i'm not sure|i am not sure|it seems|it appears|however,?)\s+",
+        "", text, flags=re.IGNORECASE
+    )
+    # Remove auxiliary + verb at start (e.g. "verify the X" → "the X")
+    cleaned = re.sub(
+        r"^(verify|check|confirm|recalculate|validate|test|review|"
+        r"inspect|determine|conclude)\s+(the\s+|that\s+|if\s+)?",
+        "", cleaned, flags=re.IGNORECASE
+    )
+    # Take up to the first stop word / punctuation
+    match = re.match(
+        r"([a-z][a-z0-9 \-]*?)(?:\s+(?:is|are|was|were|might|could|seems|appears|will|has|have)\b|[,\.;:]|$)",
+        cleaned
+    )
+    if match:
+        subject = match.group(1).strip()
+        if subject:
+            return subject
+    # Ultimate fallback: first 3 words
+    words = cleaned.split()
+    return " ".join(words[:3]) if words else sentence[:30]
+
+
+def _extract_subject(sentence: str, nlp) -> str:
+    """Dispatch to spaCy or regex depending on whether spaCy loaded successfully."""
+    if nlp is not None:
+        return _extract_subject_spacy(sentence, nlp)
+    return _extract_subject_regex(sentence)
+
+
+# ---------------------------------------------------------------------------
+# Step 4 — Embedding-based semantic similarity
+# ---------------------------------------------------------------------------
+def _get_embedding(text: str, model_name: str, model) -> np.ndarray:
+    """Return a cached or freshly computed embedding for *text*."""
+    cache_key = (model_name, text)
+    if cache_key not in _EMBEDDING_CACHE:
+        _EMBEDDING_CACHE[cache_key] = model.encode(text, convert_to_numpy=True)
+    return _EMBEDDING_CACHE[cache_key]
+
+
+def _cosine_similarity(vec_a: np.ndarray, vec_b: np.ndarray) -> float:
+    """Cosine similarity clamped to [0.0, 1.0]."""
+    norm_a = np.linalg.norm(vec_a)
+    norm_b = np.linalg.norm(vec_b)
+    if norm_a == 0.0 or norm_b == 0.0:
+        return 0.0
+    raw = float(np.dot(vec_a, vec_b) / (norm_a * norm_b))
+    return max(0.0, min(1.0, raw))
+
+
+def _compute_similarity(
+    subj_a: str,
+    subj_b: str,
+    model_name: str,
+    model,
+) -> float:
+    """Compute embedding-based cosine similarity between two subject strings."""
+    if not subj_a or not subj_b:
+        return 0.0
+    emb_a = _get_embedding(subj_a, model_name, model)
+    emb_b = _get_embedding(subj_b, model_name, model)
+    return _cosine_similarity(emb_a, emb_b)
+
+
+# ---------------------------------------------------------------------------
+# Step 5 — Proximity score
+# ---------------------------------------------------------------------------
+def _proximity_score(gap: int, decay: float = 50.0) -> float:
+    """Exponential decay: larger gap → smaller score. Result is in (0, 1]."""
+    return math.exp(-gap / decay)
+
+
+# ---------------------------------------------------------------------------
+# Step 6 — Match score
+# ---------------------------------------------------------------------------
+def _match_score(
+    subject_similarity: float,
+    proximity: float,
+    weights: Tuple[float, float] = (0.7, 0.3),
+) -> float:
+    """Weighted combination of semantic similarity and proximity."""
+    w_sim, w_prox = weights
+    return w_sim * subject_similarity + w_prox * proximity
+
+
+# ---------------------------------------------------------------------------
+# Step 7 — Resolution assignment
+# ---------------------------------------------------------------------------
+def _assign_resolutions(
+    hedges: List[_Statement],
+    verifications: List[_Statement],
+    model_name: str,
+    model,
+    threshold: float,
+    decay: float,
+    weights: Tuple[float, float],
+) -> List[_HedgeResult]:
+    """
+    For each hedge, evaluate all *future* verifications and select the best match.
+
+    A verification may resolve multiple hedges only if subject_similarity > 0.90
+    for every hedge it resolves (per spec §7).
+    """
+    results: List[_HedgeResult] = []
+
+    # Track which verifications are already claimed exclusively
+    # (i.e., similarity ≤ 0.90 for this hedge but already matched to another)
+    exclusively_claimed: Dict[str, float] = {}  # ver_id -> best similarity used
+
+    for hedge in hedges:
+        best_score = -1.0
+        best_ver: Optional[_Statement] = None
+        best_sim = 0.0
+        best_prox = 0.0
+
+        for ver in verifications:
+            # Only consider verifications that appear *after* the hedge
+            if ver.position <= hedge.position:
+                continue
+
+            sim = _compute_similarity(hedge.subject, ver.subject, model_name, model)
+            gap = ver.position - hedge.position
+            prox = _proximity_score(gap, decay)
+            score = _match_score(sim, prox, weights)
+
+            # If verification is exclusively claimed, only allow re-use when
+            # subject_similarity > 0.90 for this hedge too.
+            if ver.id in exclusively_claimed:
+                if sim <= 0.90:
+                    continue
+
+            if score > best_score:
+                best_score = score
+                best_ver = ver
+                best_sim = sim
+                best_prox = prox
+
+        resolved = (best_ver is not None) and (best_score >= threshold)
+
+        result = _HedgeResult(
+            id=hedge.id,
+            subject=hedge.subject,
+            position=hedge.position,
+        )
+
+        if best_ver is not None:
+            result.matched_verification = best_ver.id if resolved else None
+            result.subject_similarity = round(best_sim, 4)
+            result.proximity_score = round(best_prox, 4)
+            result.match_score = round(best_score, 4)
+            result.resolved = resolved
+
+            # Mark this verification as claimed; record the similarity
+            if resolved and best_sim <= 0.90:
+                exclusively_claimed[best_ver.id] = best_sim
+        else:
+            result.matched_verification = None
+            result.resolved = False
+
+        results.append(result)
+
+    return results
+
+
+# ---------------------------------------------------------------------------
+# Step 8 — Uncertainty weight adjustment
+# ---------------------------------------------------------------------------
+def _adjust_weights(
+    results: List[_HedgeResult],
+    reduction: float = 0.8,
+) -> None:
+    """Mutate each _HedgeResult in place, computing effective_weight."""
+    for r in results:
+        if r.resolved and r.match_score is not None:
+            r.effective_weight = round(1.0 * (1.0 - reduction * r.match_score), 4)
+        else:
+            r.effective_weight = 1.0
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+def _split_sentences(text: str) -> List[str]:
+    """
+    Split a reasoning trace into sentences.
+
+    Handles common sentence-ending punctuation and newline-delimited blocks
+    that reasoning models often produce.
+    """
+    # Normalise line endings
+    text = text.replace("\r\n", "\n").replace("\r", "\n")
+    # Split on sentence-terminating punctuation OR on blank lines
+    raw = re.split(r"(?<=[.!?])\s+|\n{2,}", text)
+    # Further split long lines that lack terminal punctuation but contain newlines
+    sentences: List[str] = []
+    for segment in raw:
+        lines = [l.strip() for l in segment.split("\n") if l.strip()]
+        sentences.extend(lines)
+    return [s for s in sentences if s]
+
+
+# ---------------------------------------------------------------------------
+# Public API
+# ---------------------------------------------------------------------------
+def calculate_proximity_metrics(
+    reasoning_text: str,
+    embedding_model: str = "all-MiniLM-L6-v2",
+    similarity_threshold: float = 0.60,
+    proximity_decay: float = 50.0,
+    match_weights: Tuple[float, float] = (0.7, 0.3),
+    resolution_weight_reduction: float = 0.8,
+) -> dict:
+    """
+    Analyse a reasoning trace and return Topic-Aware Self-Correction Proximity metrics.
+
+    Parameters
+    ----------
+    reasoning_text : str
+        The raw reasoning / chain-of-thought text produced by the LLM.
+    embedding_model : str
+        SentenceTransformer model name (default: ``all-MiniLM-L6-v2``).
+        Override via the ``PROXIMITY_EMBEDDING_MODEL`` environment variable.
+    similarity_threshold : float
+        Minimum match_score for a hedge to be marked as resolved (default: 0.60).
+    proximity_decay : float
+        Decay constant for the exponential proximity formula (default: 50.0).
+    match_weights : tuple[float, float]
+        Weights for (subject_similarity, proximity_score) in match_score (default: 0.7, 0.3).
+    resolution_weight_reduction : float
+        Fraction of match_score subtracted from hedge_weight when resolved (default: 0.8).
+
+    Returns
+    -------
+    dict with keys:
+        total_hedges, resolved_hedges, unresolved_hedges, trur,
+        weighted_trur, matches
+    """
+    # Allow .env override for the embedding model
+    embedding_model = os.getenv("PROXIMITY_EMBEDDING_MODEL", embedding_model)
+
+    if not reasoning_text or not reasoning_text.strip():
+        logger.info("[proximity_metric] Empty reasoning text — returning zero metrics.")
+        return {
+            "total_hedges": 0,
+            "resolved_hedges": 0,
+            "unresolved_hedges": 0,
+            "trur": 0.0,
+            "weighted_trur": 0.0,
+            "matches": [],
+        }
+
+    # --- Load singletons ---
+    model = _load_embedding_model(embedding_model)
+    nlp   = _load_nlp()
+
+    # --- Sentence segmentation ---
+    sentences = _split_sentences(reasoning_text)
+    logger.debug("[proximity_metric] Segmented %d sentences.", len(sentences))
+
+    # --- Steps 1 & 2: Detect hedges and verifications ---
+    hedges        = _detect_hedges(sentences)
+    verifications = _detect_verifications(sentences)
+
+    logger.info(
+        "[proximity_metric] Found %d hedge(s) and %d verification(s).",
+        len(hedges), len(verifications),
+    )
+
+    if not hedges:
+        return {
+            "total_hedges": 0,
+            "resolved_hedges": 0,
+            "unresolved_hedges": 0,
+            "trur": 0.0,
+            "weighted_trur": 0.0,
+            "matches": [],
+        }
+
+    # --- Step 3: Extract subjects ---
+    for stmt in hedges + verifications:
+        stmt.subject = _extract_subject(stmt.sentence, nlp)
+
+    # --- Steps 4-7: Assign resolutions ---
+    results = _assign_resolutions(
+        hedges, verifications,
+        model_name=embedding_model,
+        model=model,
+        threshold=similarity_threshold,
+        decay=proximity_decay,
+        weights=match_weights,
+    )
+
+    # --- Step 8: Adjust weights ---
+    _adjust_weights(results, reduction=resolution_weight_reduction)
+
+    # --- Aggregate statistics ---
+    total      = len(results)
+    resolved   = sum(1 for r in results if r.resolved)
+    unresolved = total - resolved
+    trur       = round(resolved / total, 4) if total > 0 else 0.0
+
+    # weighted_trur: mean fraction of uncertainty eliminated across all hedges
+    weight_reductions = [round(1.0 - r.effective_weight, 4) for r in results]
+    weighted_trur     = round(sum(weight_reductions) / total, 4) if total > 0 else 0.0
+
+    matches = []
+    for r in results:
+        record: dict = {
+            "id":                    r.id,
+            "subject":               r.subject,
+            "position":              r.position,
+            "matched_verification":  r.matched_verification,
+            "subject_similarity":    r.subject_similarity,
+            "proximity_score":       r.proximity_score,
+            "match_score":           r.match_score,
+            "resolved":              r.resolved,
+            "effective_weight":      r.effective_weight,
+        }
+        matches.append(record)
+
+    return {
+        "total_hedges":     total,
+        "resolved_hedges":  resolved,
+        "unresolved_hedges": unresolved,
+        "trur":             trur,
+        "weighted_trur":    weighted_trur,
+        "matches":          matches,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Smoke-test / CLI entry point
+# ---------------------------------------------------------------------------
+if __name__ == "__main__":
+    import sys
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s [%(levelname)s] %(message)s",
+    )
+
+    SAMPLE_TRACE = """
+Maybe the equation is incorrect.
+Let me verify the equation.
+The equation is correct.
+
+However, I'm not sure about the boundary condition.
+The final answer seems reasonable.
+"""
+
+    print("\n" + "=" * 60)
+    print("PROXIMITY METRIC — SMOKE TEST")
+    print("=" * 60)
+    print("Input reasoning trace:")
+    print(SAMPLE_TRACE)
+
+    result = calculate_proximity_metrics(SAMPLE_TRACE)
+
+    print("\nResult:")
+    print(json.dumps(result, indent=2))
+
+    print("\nSummary:")
+    print(f"  Total hedges     : {result['total_hedges']}")
+    print(f"  Resolved hedges  : {result['resolved_hedges']}")
+    print(f"  Unresolved hedges: {result['unresolved_hedges']}")
+    print(f"  TRUR             : {result['trur']:.2%}")
+    print(f"  Weighted TRUR    : {result['weighted_trur']:.2%}")
+
+    # Exit with non-zero if no hedges detected (likely an env issue)
+    if result["total_hedges"] == 0:
+        print("\n[WARN] No hedges detected — check that input text is non-empty.", file=sys.stderr)
+        sys.exit(1)
+
+    sys.exit(0)

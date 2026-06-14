@@ -24,3 +24,4 @@ class LLMUnifiedResponse(BaseModel):
     content: str
     structured_json: Optional[Dict[str, Any]] = None
     metrics: LLMExecutionMetrics
+    reasoning_content: Optional[str] = None  # <-- Add this here to capture the internal thought chain

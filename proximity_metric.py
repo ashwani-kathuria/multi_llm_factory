@@ -62,12 +62,28 @@ _HEDGE_KEYWORDS: List[str] = [
     "maybe", "perhaps", "might", "could", "possibly", "probably",
     "i think", "i believe", "not sure", "uncertain", "seems", "appears",
     "likely", "unlikely",
+    # --- added keywords ---
+    "assume",        # e.g. "I assume this is correct"
+    "aim for",       # e.g. "I'll aim for 10 lines"
+    "decent",        # e.g. "a decent answer"
+    "considering",   # e.g. "considering the context"
+    "typically",     # e.g. "this typically means"
+    "let's",         # e.g. "let's say", "let's assume"
 ]
 
 _VERIFICATION_KEYWORDS: List[str] = [
     "verify", "check", "confirm", "recalculate", "validate", "test",
     "review", "inspect", "determine", "conclude", "therefore", "indeed",
     "confirmed",
+    # --- added keywords ---
+    "make sure",       # e.g. "make sure the count is right"
+    "count the lines", # e.g. "let me count the lines"
+    "double-check",    # e.g. "let me double-check"
+    "accuracy",        # e.g. "checking for accuracy"
+    "refine",          # e.g. "let me refine this"
+    "considering",     # e.g. "considering the above, the answer is"
+    "perfect",         # e.g. "Perfect, that looks right"
+    "done",            # e.g. "Done. The answer is confirmed."
 ]
 
 # ---------------------------------------------------------------------------
@@ -86,6 +102,8 @@ class _HedgeResult:
     id: str
     subject: str
     position: int
+    sentence: str = ""              # the original sentence that triggered detection
+    matched_keyword: str = ""       # the keyword that fired the hedge detector
     matched_verification: Optional[str] = None
     subject_similarity: Optional[float] = None
     proximity_score: Optional[float] = None
@@ -187,19 +205,30 @@ def _load_nlp():
 # Step 1 — Detect hedge statements
 # ---------------------------------------------------------------------------
 def _detect_hedges(sentences: List[str]) -> List[_Statement]:
-    """Return a _Statement for every sentence that contains a hedge keyword."""
+    """Return a _Statement for every sentence that contains a hedge keyword.
+
+    The _Statement.subject field is left empty here (filled in Step 3).
+    The first matching keyword is stored in a side-table returned alongside
+    the statements so callers can record which keyword fired.
+    """
     hedges: List[_Statement] = []
     hedge_index = 0
     for pos, sent in enumerate(sentences):
         lower = sent.lower()
-        if any(kw in lower for kw in _HEDGE_KEYWORDS):
-            hedge_index += 1
-            hedges.append(_Statement(
-                id=f"H{hedge_index}",
-                sentence=sent.strip(),
-                subject="",          # filled in Step 3
-                position=pos,
-            ))
+        for kw in _HEDGE_KEYWORDS:
+            if kw in lower:
+                hedge_index += 1
+                stmt = _Statement(
+                    id=f"H{hedge_index}",
+                    sentence=sent.strip(),
+                    subject="",          # filled in Step 3
+                    position=pos,
+                )
+                # Stash the triggering keyword as a custom attribute so
+                # _assign_resolutions can carry it into _HedgeResult.
+                stmt._matched_keyword = kw  # type: ignore[attr-defined]
+                hedges.append(stmt)
+                break   # only record a sentence once even if multiple keywords match
     return hedges
 
 
@@ -448,6 +477,8 @@ def _assign_resolutions(
             id=hedge.id,
             subject=hedge.subject,
             position=hedge.position,
+            sentence=hedge.sentence,
+            matched_keyword=getattr(hedge, "_matched_keyword", ""),
         )
 
         if best_ver is not None:
@@ -614,6 +645,8 @@ def calculate_proximity_metrics(
     for r in results:
         record: dict = {
             "id":                    r.id,
+            "sentence":              r.sentence,
+            "matched_keyword":       r.matched_keyword,
             "subject":               r.subject,
             "position":              r.position,
             "matched_verification":  r.matched_verification,

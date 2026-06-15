@@ -41,8 +41,13 @@ multi_llm_factory/
 │   └── wrappers.py              # Provider Strategy implementation drivers
 │
 ├── proximity_metric.py          # Topic-Aware Self-Correction Proximity module
+├── run_proximity_tests.py       # Batch test runner for proximity metric evaluation
 ├── main.py                      # CLI orchestration pipeline entry-point
 ├── requirements.txt             # Third-party platform dependencies
+├── testCases_Batch_1.txt        # Test cases TC001–TC025 (CSV)
+├── testCases_Batch_2.txt        # Test cases TC026–TC050 (CSV)
+├── testCases_Batch_3.txt        # Test cases TC051–TC075 (CSV)
+├── testCases_Batch_4.txt        # Test cases TC076–TC100 (CSV)
 └── .env                         # Local credentials (git-ignored)
 ```
 
@@ -119,7 +124,7 @@ python main.py -p google -m gemini-2.5-flash -f prompt.txt
 python main.py -p openai -m gpt-4o
 ```
 
-### Full CLI Reference
+### Full CLI Reference — `main.py`
 
 | Flag | Long Form | Default | Description |
 |------|-----------|---------|-------------|
@@ -129,6 +134,27 @@ python main.py -p openai -m gpt-4o
 | `-f` | `--prompt-file` | `None` | Path to a `.txt` file containing the prompt |
 | `-o` | `--output-file` | `output.txt` | Path to save the model's text response |
 | `-k` | `--max-tokens` | `16384` | Maximum output token budget |
+| `-r` | `--reasoning-file` | `None` | Analyse a pre-captured reasoning trace directly (skips the LLM call) |
+| `-b` | `--thinking-budget` | `None` | Thinking token budget for Gemini 2.5+ (0 = disable; omit = auto 8 192) |
+
+### Analyse a Reasoning File Directly
+
+Skip the LLM call and feed a saved reasoning trace straight to the proximity
+metric:
+
+```bash
+python main.py -r reasoning_trace.txt
+```
+
+### Control Gemini Thinking Budget
+
+```bash
+# Force 16 384 thinking tokens (richer trace on complex prompts)
+python main.py -p google -m gemini-2.5-flash -f prompt.txt -b 16384
+
+# Disable thinking entirely (fastest, no proximity analysis)
+python main.py -p google -m gemini-2.5-flash -f prompt.txt -b 0
+```
 
 ---
 
@@ -151,9 +177,9 @@ uncertainty weight of resolved hedges proportionally to match quality.
 
 | Step | Description |
 |------|-------------|
-| 1 | **Hedge detection** — find sentences with uncertainty markers (`maybe`, `might`, `not sure`, `seems`, …) |
-| 2 | **Verification detection** — find sentences with resolution markers (`verify`, `confirm`, `therefore`, …) |
-| 3 | **Subject extraction** — spaCy dependency parsing extracts the uncertainty *target* (e.g. `boundary condition`) |
+| 1 | **Hedge detection** — sentences containing uncertainty keywords; verified sentences with ≥2 verification keywords are skipped (verification-dominance rule) |
+| 2 | **Verification detection** — sentences with resolution markers |
+| 3 | **Subject extraction** — 5-priority spaCy dependency parser; Priority 1.5 uses keyword-proximity to extract the noun closest to the triggering keyword |
 | 4 | **Embedding similarity** — SentenceTransformer cosine similarity between hedge & verification subjects |
 | 5 | **Proximity score** — `exp(−gap / 50)`, rewards verifications that follow quickly |
 | 6 | **Match score** — `0.7 × similarity + 0.3 × proximity` |
@@ -187,6 +213,8 @@ result = calculate_proximity_metrics(
   "matches": [
     {
       "id": "H1",
+      "sentence": "Maybe the equation is incorrect.",
+      "matched_keyword": "maybe",
       "subject": "the equation",
       "position": 0,
       "matched_verification": "V1",
@@ -198,6 +226,8 @@ result = calculate_proximity_metrics(
     },
     {
       "id": "H2",
+      "sentence": "However, I'm not sure about the boundary condition.",
+      "matched_keyword": "not sure",
       "subject": "the boundary condition",
       "position": 3,
       "matched_verification": null,
@@ -210,6 +240,8 @@ result = calculate_proximity_metrics(
 
 | Field | Description |
 |-------|-------------|
+| `sentence` | The full sentence that triggered hedge detection |
+| `matched_keyword` | The specific keyword that fired the hedge detector |
 | `trur` | Topic-Resolved Uncertainty Ratio — `resolved / total` |
 | `weighted_trur` | Mean weight reduction across all hedges |
 | `effective_weight` | Per-hedge uncertainty contribution after resolution adjustment |
@@ -232,14 +264,114 @@ PROXIMITY_EMBEDDING_MODEL=all-mpnet-base-v2
 | `e5-small-v2` | ⚡ Fast | Good |
 | `e5-base-v2` | Medium | High |
 
+### Hedge Keywords
+
+```
+maybe, perhaps, might, could, possibly, probably, i think, i believe,
+not sure, uncertain, seems, appears, likely, unlikely, assume,
+aim for, decent, considering, typically, let's assume, let's say
+```
+
+### Verification Keywords
+
+```
+verify, check, confirm, recalculate, validate, test, review, inspect,
+determine, conclude, therefore, indeed, confirmed, make sure,
+count the lines, double-check, accuracy, refine, considering,
+perfect, done
+```
+
+> **Note:** `considering` appears in both lists intentionally — it can act as
+> either a hedge or a verification marker depending on context. The
+> **verification-dominance rule** automatically prevents sentences with ≥ 2
+> verification keywords from being classified as hedges.
+
 ### Standalone Smoke Test
 
 ```bash
 python proximity_metric.py
 ```
 
-Runs the spec example trace and prints full JSON output. Model weights are cached after
-the first run — subsequent calls complete in under one second.
+Runs the spec example trace and prints full JSON output. Model weights are
+cached after the first run — subsequent calls complete in under one second.
+
+---
+
+## 🧪 Batch Test Runner — `run_proximity_tests.py`
+
+Evaluates the proximity metric against a structured test suite of 100 reasoning
+traces spread across four CSV batch files (`testCases_Batch_1.txt` –
+`testCases_Batch_4.txt`).
+
+### Test Case Schema
+
+Each batch file is a CSV with the following columns:
+
+| Column | Description |
+|--------|-------------|
+| `TestCaseID` | Unique identifier (TC001 – TC100) |
+| `Category` | Reasoning category (e.g. Certain, Uncertain) |
+| `CertaintyLevel` | Ground-truth certainty (High / Medium / Low) |
+| `ConfidenceTrajectory` | How confidence evolved (e.g. `Low→Medium→High`) |
+| `ExpectedLabel` | Expected classification label |
+| `ReasoningText` | The raw chain-of-thought text to analyse |
+| `Explanation` | Human rationale for the expected label |
+
+### Usage
+
+```bash
+# Single test case (searches all batches)
+python run_proximity_tests.py TC001
+
+# Multiple specific IDs
+python run_proximity_tests.py TC001 TC025 TC050 TC075
+
+# All 100 test cases
+python run_proximity_tests.py --all
+
+# Entire batch (or multiple batches)
+python run_proximity_tests.py --batch 1
+python run_proximity_tests.py --batch 2 3
+
+# Verbose — per-hedge sentence & keyword breakdown
+python run_proximity_tests.py TC001 TC002 --verbose
+
+# Save report to file (also printed to terminal)
+python run_proximity_tests.py --all --output report.txt
+```
+
+### CLI Reference — `run_proximity_tests.py`
+
+| Flag | Long Form | Description |
+|------|-----------|-------------|
+| *(positional)* | `TCXXX …` | One or more test case IDs |
+| `--all` | `-all` | Run all 100 test cases |
+| `--batch N` | `-batch N` | Run batch(es) 1–4 |
+| `--verbose` | `-v` | Print per-hedge breakdown for every case |
+| `--output FILE` | `-o FILE` | Save results to FILE |
+
+### Output Table
+
+```
+TestCaseID  Category      Certainty       Expected        TotalHedges  Resolved      TRUR   WtdTRUR       ms
+------------------------------------------------------------------------------------------------------------
+TC001       Certain       High            Certain                   4         1    25.0%    18.9%  54038.6
+TC002       Certain       High            Certain                   3         0     0.0%     0.0%    229.5
+...
+------------------------------------------------------------------------------------------------------------
+Summary (100 test case(s))
+  Avg hedges per case : 4.12
+  Avg TRUR            : 22.3%
+  Total wall time     : 47.20s
+```
+
+> **Tip:** The first run loads the embedding model (~3 s). Every subsequent
+> test case in the same session completes in < 300 ms thanks to in-process
+> singleton caching.
+
+> **Future:** Score-vs-CertaintyLevel matching (pass/fail column) will be
+> added in a future iteration once a TRUR-to-certainty calibration threshold
+> is established.
 
 ---
 

@@ -68,7 +68,8 @@ _HEDGE_KEYWORDS: List[str] = [
     "decent",        # e.g. "a decent answer"
     "considering",   # e.g. "considering the context"
     "typically",     # e.g. "this typically means"
-    "let's",         # e.g. "let's say", "let's assume"
+    "let's assume",  # e.g. "let's assume the universal context" (specific hedge)
+    "let's say",     # e.g. "let's say the answer is X"
 ]
 
 _VERIFICATION_KEYWORDS: List[str] = [
@@ -210,11 +211,21 @@ def _detect_hedges(sentences: List[str]) -> List[_Statement]:
     The _Statement.subject field is left empty here (filled in Step 3).
     The first matching keyword is stored in a side-table returned alongside
     the statements so callers can record which keyword fired.
+
+    Verification-dominance rule: if a sentence already contains ≥2 verification
+    keywords it is acting as a verification statement, not a hedge, and is
+    skipped here even if a hedge keyword also appears in it.
     """
     hedges: List[_Statement] = []
     hedge_index = 0
     for pos, sent in enumerate(sentences):
         lower = sent.lower()
+
+        # Verification-dominance: skip sentences that are clearly verification
+        ver_kw_count = sum(1 for vkw in _VERIFICATION_KEYWORDS if vkw in lower)
+        if ver_kw_count >= 2:
+            continue
+
         for kw in _HEDGE_KEYWORDS:
             if kw in lower:
                 hedge_index += 1
@@ -255,19 +266,24 @@ def _detect_verifications(sentences: List[str]) -> List[_Statement]:
 # ---------------------------------------------------------------------------
 # Step 3 — Subject extraction
 # ---------------------------------------------------------------------------
-def _extract_subject_spacy(sentence: str, nlp) -> str:
+def _extract_subject_spacy(sentence: str, nlp, matched_keyword: str = "") -> str:
     """
     Use spaCy dependency parsing to extract the primary subject noun phrase.
 
     Strategy (in priority order):
-      0. Prepositional uncertainty target: tokens matching hedge adjectives
-         (sure, certain, confident) that have a 'prep' child → return the
-         pobj of that prep.  Handles "not sure about X", "uncertain about X".
-      1. Object of a verb with a hedge/verification keyword as the head
-         (e.g. "verify the equation" → "equation").
-      2. Non-pronoun nominal subject of the root verb.
-      3. First non-pronoun noun chunk in the sentence.
-      4. Fallback: regex heuristic.
+      0.  Prepositional uncertainty target: tokens matching hedge adjectives
+          (sure, certain, confident) that have a 'prep' child → return the
+          pobj of that prep.  Handles "not sure about X", "uncertain about X".
+      1.  Object of a verb with a hedge/verification keyword as the head
+          (e.g. "verify the equation" → "equation").
+      1.5 Keyword-proximate noun chunk: locate the triggering keyword's token
+          position and return the first non-pronoun noun chunk that starts
+          within 3 tokens after it.  Handles "maybe a dash of symbolism" →
+          "a dash of symbolism".  Falls back to a 2-token text slice when no
+          noun chunk is found immediately after the keyword.
+      2.  Non-pronoun nominal subject of the root verb.
+      3.  First non-pronoun noun chunk in the sentence.
+      4.  Fallback: regex heuristic.
     """
     doc = nlp(sentence)
 
@@ -295,6 +311,48 @@ def _extract_subject_spacy(sentence: str, nlp) -> str:
                     for chunk in doc.noun_chunks:
                         if child in chunk:
                             return chunk.text.lower()
+
+    # Priority 1.5: keyword-proximate noun chunk
+    # Find where the triggering keyword sits in the token stream, then return
+    # the first non-pronoun noun chunk that starts within 3 tokens after it,
+    # PROVIDED no VERB/AUX token intervenes between keyword and chunk.
+    #
+    # "maybe a dash of symbolism"  → "a dash of symbolism"  ✓ (no verb gap)
+    # "are typically harvested…"   → falls through to P2    ✓ (harvested is VERB)
+    # "My process, I think, should be…" → falls through     ✓ (should/be are AUX/VERB)
+    if matched_keyword:
+        kw_words = matched_keyword.lower().split()
+        kw_end_idx: Optional[int] = None
+        for i in range(len(doc) - len(kw_words) + 1):
+            if all(doc[i + j].text.lower() == kw_words[j] for j in range(len(kw_words))):
+                kw_end_idx = i + len(kw_words)
+                break
+
+        if kw_end_idx is not None:
+            verb_blocked = False   # True if a chunk was found but rejected due to verb gap
+            for chunk in doc.noun_chunks:
+                if kw_end_idx <= chunk.start <= kw_end_idx + 3:
+                    if chunk.root.pos_ != "PRON":
+                        # Reject the chunk if any VERB/AUX sits between keyword and chunk
+                        has_verb_gap = any(
+                            doc[k].pos_ in ("VERB", "AUX")
+                            for k in range(kw_end_idx, chunk.start)
+                        )
+                        if not has_verb_gap:
+                            return chunk.text.lower()
+                        verb_blocked = True
+
+            # Text fallback: only when NO chunk was found at all (not when verb-blocked).
+            # Grab up to 2 noun/adjective tokens immediately after the keyword.
+            if not verb_blocked:
+                content = [
+                    doc[k]
+                    for k in range(kw_end_idx, min(kw_end_idx + 5, len(doc)))
+                    if not doc[k].is_punct and not doc[k].is_space
+                       and doc[k].pos_ in ("NOUN", "PROPN", "ADJ")
+                ]
+                if content:
+                    return " ".join(t.text.lower() for t in content[:2])
 
     # Priority 2: non-pronoun nominal subject of the root verb
     for token in doc:
@@ -356,10 +414,10 @@ def _extract_subject_regex(sentence: str) -> str:
     return " ".join(words[:3]) if words else sentence[:30]
 
 
-def _extract_subject(sentence: str, nlp) -> str:
+def _extract_subject(sentence: str, nlp, matched_keyword: str = "") -> str:
     """Dispatch to spaCy or regex depending on whether spaCy loaded successfully."""
     if nlp is not None:
-        return _extract_subject_spacy(sentence, nlp)
+        return _extract_subject_spacy(sentence, nlp, matched_keyword=matched_keyword)
     return _extract_subject_regex(sentence)
 
 
@@ -615,7 +673,10 @@ def calculate_proximity_metrics(
         }
 
     # --- Step 3: Extract subjects ---
-    for stmt in hedges + verifications:
+    for stmt in hedges:
+        kw = getattr(stmt, "_matched_keyword", "")
+        stmt.subject = _extract_subject(stmt.sentence, nlp, matched_keyword=kw)
+    for stmt in verifications:
         stmt.subject = _extract_subject(stmt.sentence, nlp)
 
     # --- Steps 4-7: Assign resolutions ---

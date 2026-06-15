@@ -127,13 +127,16 @@ def run_test_case(row: dict, verbose: bool = False) -> dict:
         "ConfidenceTrajectory": row.get("ConfidenceTrajectory", ""),
         "ExpectedLabel":        row.get("ExpectedLabel", ""),
         # proximity output
-        "total_hedges":         metrics["total_hedges"],
-        "resolved_hedges":      metrics["resolved_hedges"],
-        "unresolved_hedges":    metrics["unresolved_hedges"],
-        "trur":                 metrics["trur"],
-        "weighted_trur":        metrics["weighted_trur"],
-        "matches":              metrics["matches"],
-        "elapsed_ms":           round(elapsed_ms, 1),
+        "total_hedges":          metrics["total_hedges"],
+        "resolved_hedges":       metrics["resolved_hedges"],
+        "unresolved_hedges":     metrics["unresolved_hedges"],
+        "trur":                  metrics["trur"],
+        "weighted_trur":         metrics["weighted_trur"],
+        "late_unresolved_ratio": metrics.get("late_unresolved_ratio", 0.0),
+        "conclusion_finality":   metrics.get("conclusion_finality", 0.0),
+        "predicted_certainty":   metrics.get("predicted_certainty", "?"),
+        "matches":               metrics["matches"],
+        "elapsed_ms":            round(elapsed_ms, 1),
     }
 
 
@@ -158,12 +161,14 @@ _HEADER_ROW = (
     f"{'Resolved':>8}  "
     f"{'TRUR':>8}  "
     f"{'WtdTRUR':>8}  "
+    f"{'Predicted':<12}  "
     f"{'ms':>7}"
 )
 _SEP = "-" * len(_HEADER_ROW)
 
 
 def _format_result_row(r: dict) -> str:
+    predicted = r.get("predicted_certainty", "?")
     return (
         f"{r['TestCaseID']:<10}  "
         f"{r['Category']:<12}  "
@@ -173,6 +178,7 @@ def _format_result_row(r: dict) -> str:
         f"{r['resolved_hedges']:>8}  "
         f"{r['trur']:>7.1%}  "
         f"{r['weighted_trur']:>7.1%}  "
+        f"{predicted:<12}  "
         f"{r['elapsed_ms']:>7.1f}"
     )
 

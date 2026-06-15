@@ -574,6 +574,128 @@ def _adjust_weights(
 
 
 # ---------------------------------------------------------------------------
+# Step 9 helpers — Certainty classification signals
+# ---------------------------------------------------------------------------
+
+# Phrases strongly associated with a definitive conclusion
+_FINALITY_CERTAIN: List[str] = [
+    "therefore", "thus", "hence", "consequently", "as a result",
+    "i can conclude", "the answer is", "the conclusion is",
+    "with confidence", "can be stated", "has been confirmed",
+    "is confirmed", "is verified", "without doubt",
+    "definitively", "unambiguously", "can be stated with confidence",
+    "the evidence fully supports", "fully supports",
+]
+
+# Phrases that indicate lingering uncertainty at the conclusion
+_FINALITY_UNCERTAIN: List[str] = [
+    "still not sure", "still uncertain", "remains unclear",
+    "cannot determine", "cannot conclude", "unable to confirm",
+    "i'm not sure", "i am not sure", "unclear", "ambiguous",
+    "further investigation", "more information needed",
+    "insufficient evidence", "inconclusive", "remains open",
+]
+
+
+def _late_unresolved_ratio(results: List[_HedgeResult], total_sentences: int) -> float:
+    """
+    Fraction of *unresolved* hedges whose sentence position falls in the
+    second half of the document.
+
+    High value → uncertainty persists into the conclusion (signals Uncertain).
+    Low value  → remaining doubt was expressed early and not carried forward.
+    """
+    unresolved = [r for r in results if not r.resolved]
+    if not unresolved or total_sentences == 0:
+        return 0.0
+    midpoint = total_sentences / 2.0
+    late_count = sum(1 for r in unresolved if r.position >= midpoint)
+    return round(late_count / len(unresolved), 4)
+
+
+def _conclusion_finality(sentences: List[str], window: int = 3) -> float:
+    """
+    Scan the last *window* sentences for definitive vs uncertain language.
+
+    Returns a score in [-1.0, +1.0]:
+      > 0  → conclusion leans definitive (supports Certain)
+      < 0  → conclusion leans uncertain
+      = 0  → neutral / no signal
+    """
+    tail = sentences[-window:] if len(sentences) >= window else sentences
+    tail_text = " ".join(tail).lower()
+
+    certain_hits  = sum(1 for p in _FINALITY_CERTAIN   if p in tail_text)
+    uncertain_hits = sum(1 for p in _FINALITY_UNCERTAIN if p in tail_text)
+
+    total = certain_hits + uncertain_hits
+    if total == 0:
+        return 0.0
+    return round((certain_hits - uncertain_hits) / total, 4)
+
+
+def _predict_certainty(
+    total_hedges: int,
+    trur: float,
+    late_unresolved: float,
+    finality: float,
+) -> str:
+    """
+    Combine TRUR, late-unresolved ratio, and conclusion finality into a
+    predicted certainty label.
+
+    Composite score (0 → 1, higher = more certain):
+      40 % — TRUR (resolution rate)
+      35 % — early-unresolved pattern  (1 − late_unresolved_ratio)
+      25 % — conclusion finality       (normalised to [0, 1])
+
+    Fixes applied
+    ─────────────
+    Fix 1 — Hedge density guard:
+      With fewer than 3 detected hedges the TRUR signal is statistically
+      unreliable: a single accidental keyword match flips TRUR to 50-100%.
+      In this case the prediction is capped at "Ambiguous" — never "Certain".
+
+    Fix 2 — Finality gate:
+      When no hedge was resolved (TRUR = 0), definitive conclusion language
+      alone cannot push the prediction to "Certain". The finality weight is
+      reduced from 0.25 → 0.10 and the freed 0.15 is redistributed to the
+      position signal, which is a more reliable indicator in the zero-TRUR case.
+
+    Thresholds:
+      ≥ 0.55 → "Certain"   (only reachable with total_hedges ≥ 3)
+      ≥ 0.35 → "Ambiguous"
+       < 0.35 → "Uncertain"
+    """
+    # Fix 2: gate finality weight on whether any hedge was actually resolved
+    if trur > 0:
+        finality_weight = 0.25
+        position_weight = 0.35
+    else:
+        # No resolution detected — demote finality, promote position signal
+        finality_weight = 0.10
+        position_weight = 0.50
+
+    score = (
+        trur                      * 0.40
+        + (1.0 - late_unresolved) * position_weight
+        + ((finality + 1.0) / 2.0) * finality_weight   # map [-1,1] → [0,1]
+    )
+
+    # Fix 1: with < 3 detected hedges we don't have enough signal to commit
+    # to an extreme label — cap at Ambiguous regardless of score
+    if total_hedges < 3:
+        return "Ambiguous" if score >= 0.35 else "Uncertain"
+
+    if score >= 0.55:
+        return "Certain"
+    elif score >= 0.35:
+        return "Ambiguous"
+    else:
+        return "Uncertain"
+
+
+# ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 def _split_sentences(text: str) -> List[str]:
@@ -663,13 +785,19 @@ def calculate_proximity_metrics(
     )
 
     if not hedges:
+        # No hedge case — classify as Certain (pending future calibration)
+        logger.info("[proximity_metric] No hedges detected — returning 'Certain*' label.")
+        finality = _conclusion_finality(sentences)
         return {
-            "total_hedges": 0,
-            "resolved_hedges": 0,
-            "unresolved_hedges": 0,
-            "trur": 0.0,
-            "weighted_trur": 0.0,
-            "matches": [],
+            "total_hedges":        0,
+            "resolved_hedges":     0,
+            "unresolved_hedges":   0,
+            "trur":                0.0,
+            "weighted_trur":       0.0,
+            "late_unresolved_ratio": 0.0,
+            "conclusion_finality": round(finality, 4),
+            "predicted_certainty": "Certain*",  # no hedges — TODO: calibrate
+            "matches":             [],
         }
 
     # --- Step 3: Extract subjects ---
@@ -719,13 +847,22 @@ def calculate_proximity_metrics(
         }
         matches.append(record)
 
+    # --- Step 9: Certainty classification ---
+    total_sents      = len(sentences)
+    late_unresolved  = _late_unresolved_ratio(results, total_sents)
+    finality         = _conclusion_finality(sentences)
+    predicted        = _predict_certainty(total, trur, late_unresolved, finality)
+
     return {
-        "total_hedges":     total,
-        "resolved_hedges":  resolved,
-        "unresolved_hedges": unresolved,
-        "trur":             trur,
-        "weighted_trur":    weighted_trur,
-        "matches":          matches,
+        "total_hedges":          total,
+        "resolved_hedges":       resolved,
+        "unresolved_hedges":     unresolved,
+        "trur":                  trur,
+        "weighted_trur":         weighted_trur,
+        "late_unresolved_ratio": late_unresolved,
+        "conclusion_finality":   round(finality, 4),
+        "predicted_certainty":   predicted,
+        "matches":               matches,
     }
 
 

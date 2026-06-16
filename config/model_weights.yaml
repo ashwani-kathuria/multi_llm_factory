@@ -1,0 +1,14 @@
+model_a:
+  weights: {} # No weights, just HVR_Certainty
+
+model_b:
+  weights:
+    hvr: 0.70
+    trur: 0.30
+
+model_c:
+  weights:
+    hvr: 0.45
+    position: 0.25
+    trur: 0.15
+    finality: 0.15

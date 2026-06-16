@@ -41,6 +41,7 @@ multi_llm_factory/
 │   └── wrappers.py              # Provider Strategy implementation drivers
 │
 ├── proximity_metric.py          # Topic-Aware Self-Correction Proximity module
+├── experiment.py                # Multi-model evaluation research framework
 ├── run_proximity_tests.py       # Batch test runner for proximity metric evaluation
 ├── main.py                      # CLI orchestration pipeline entry-point
 ├── requirements.txt             # Third-party platform dependencies
@@ -185,7 +186,29 @@ uncertainty weight of resolved hedges proportionally to match quality.
 | 6 | **Match score** — `0.7 × similarity + 0.3 × proximity` |
 | 7 | **Resolution** — best-match verification per hedge; resolved if `match_score ≥ 0.60` |
 | 8 | **Weight adjustment** — resolved: `eff_weight = 1 − 0.8 × match_score`; unresolved: `1.0` |
-| 9 | **Certainty Prediction** — binary `Certain`/`Uncertain` label based on 45% HVR (Hedge-to-Verify Ratio), 25% Position, 15% TRUR, 15% Conclusion Finality |
+| 9 | **Feature Extraction** — Exports a unified `FeatureSet` containing `HVR`, `TRUR`, `Position`, etc. |
+
+---
+
+## 🔬 Multi-Model Research Platform (`experiment.py`)
+
+The platform contains a dedicated experimental evaluation framework designed to compare multiple uncertainty scoring algorithms using scikit-learn metrics.
+
+### Supported Models
+- **Model A**: `HVR Only`
+- **Model B**: `HVR + TRUR` (Current Best Performer — 77.0% Accuracy)
+- **Model C**: `HVR + Position + TRUR + Finality`
+
+### Running the Experiment
+The research platform parses the 100 test cases and evaluates all models simultaneously, optimizing thresholds via Grid Search.
+
+```bash
+python experiment.py
+```
+
+### Outputs
+- **`reports/research_report.md`**: Full Markdown report with Confusion Matrices, Ablation Studies, Threshold Grid Search results, and Feature Correlation Analysis.
+- **`reports/per_test_case_results.csv`**: Raw per-row evaluation metrics mapping features to Model predictions against ground truth.
 
 ### Public API
 

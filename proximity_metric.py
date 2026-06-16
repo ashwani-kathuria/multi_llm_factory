@@ -59,32 +59,136 @@ _EMBEDDING_CACHE: Dict[Tuple[str, str], np.ndarray] = {}  # (model_name, text) -
 # Keyword lists (Steps 1 & 2)
 # ---------------------------------------------------------------------------
 _HEDGE_KEYWORDS: List[str] = [
+    # ── Core epistemic modals (original) ─────────────────────────────────────
     "maybe", "perhaps", "might", "could", "possibly", "probably",
     "i think", "i believe", "not sure", "uncertain", "seems", "appears",
     "likely", "unlikely",
-    # --- added keywords ---
-    "assume",        # e.g. "I assume this is correct"
-    "aim for",       # e.g. "I'll aim for 10 lines"
-    "decent",        # e.g. "a decent answer"
-    "considering",   # e.g. "considering the context"
-    "typically",     # e.g. "this typically means"
-    "let's assume",  # e.g. "let's assume the universal context" (specific hedge)
-    "let's say",     # e.g. "let's say the answer is X"
+    # ── Original additions ────────────────────────────────────────────────────
+    "assume",
+    "aim for",
+    "decent",
+    "typically",
+    "let's assume",   # longer phrase before "assume"
+    "let's say",
+    # ── Stronger uncertainty (longer phrases first) ───────────────────────────
+    "i'm not certain",        # before "not certain"
+    "i can't be sure",
+    "i cannot be sure",
+    "not entirely sure",      # before "not sure" (already listed, no conflict)
+    "not entirely clear",
+    "not certain",
+    "not obviously",
+    "not obvious",
+    "i'm unsure",
+    "i am unsure",
+    "hard to say",
+    "difficult to determine",
+    "unclear",
+    "ambiguous",
+    # ── Reconsideration markers (LLM chain-of-thought specific) ──────────────
+    "on second thought",      # longer phrase first
+    "let me reconsider",
+    "i need to reconsider",
+    "i might be wrong",
+    "i may have made an error",
+    "hold on,",               # comma anchors to avoid "hold on tight"
+    "wait,",                  # comma anchors to avoid "wait time"
+    "hmm,",
+    # ── Possibility phrases (longer before shorter) ───────────────────────────
+    "there's a possibility",
+    "there is a possibility",
+    "one possibility",
+    "another possibility",
+    "it's possible",
+    "it is possible",
+    "there may be",
+    "alternatively",
+    # ── Approximation markers ─────────────────────────────────────────────────
+    "approximately",
+    "roughly",
+    "more or less",
+    # ── Epistemic / belief markers ────────────────────────────────────────────
+    "i suspect",
+    "i suppose",
+    "i wonder",
+    "i'd guess",
+    "in my estimation",
+    "not necessarily",
+    "to some extent",
+    "considering",            # kept from original — dual-use word
 ]
 
 _VERIFICATION_KEYWORDS: List[str] = [
+    # ── Core verification verbs (original) ───────────────────────────────────
     "verify", "check", "confirm", "recalculate", "validate", "test",
     "review", "inspect", "determine", "conclude", "therefore", "indeed",
     "confirmed",
-    # --- added keywords ---
-    "make sure",       # e.g. "make sure the count is right"
-    "count the lines", # e.g. "let me count the lines"
-    "double-check",    # e.g. "let me double-check"
-    "accuracy",        # e.g. "checking for accuracy"
-    "refine",          # e.g. "let me refine this"
-    "considering",     # e.g. "considering the above, the answer is"
-    "perfect",         # e.g. "Perfect, that looks right"
-    "done",            # e.g. "Done. The answer is confirmed."
+    # ── Original additions ────────────────────────────────────────────────────
+    "make sure",
+    "count the lines",
+    "double-check",
+    "accuracy",
+    "refine",
+    "perfect",
+    "done",
+    # ── Logical connectives (conclusion derivation) ───────────────────────────
+    "it follows that",        # longest phrase first
+    "as a result",
+    "consequently",
+    "this implies",
+    "this indicates",
+    "therefore",              # already listed; kept for completeness
+    "hence",
+    "thus",
+    # ── Explicit conclusion markers (longer phrases first) ────────────────────
+    "the conclusion is",
+    "in conclusion",
+    "to conclude",
+    "to summarize",
+    "in summary",
+    "the answer is",
+    "the result is",
+    "we can conclude",
+    "i can conclude",
+    "i conclude",
+    # ── Verification intent phrases (LLM action phrases) ──────────────────────
+    "let me recalculate",     # longer before "let me check" etc.
+    "let me recompute",
+    "let me re-examine",
+    "let me calculate",
+    "let me compute",
+    "let me confirm",
+    "let me examine",
+    "let me verify",
+    "let me check",
+    "i will verify",
+    "i should verify",
+    "i should check",
+    # ── Consistency & evidence markers ────────────────────────────────────────
+    "upon closer inspection",
+    "upon examination",
+    "upon reflection",
+    "after reviewing",
+    "after checking",
+    "after analysis",
+    "having confirmed",
+    "having verified",
+    "consistent with",
+    "this is consistent",
+    "aligns with",
+    "corroborates",
+    "as demonstrated",
+    "as shown",
+    # ── Confidence & certainty assertions ─────────────────────────────────────
+    "i am confident",         # before "i'm confident" in case of contraction
+    "i'm confident",
+    "i can confirm",
+    "it is confirmed",
+    "it is evident",
+    "it is clear",
+    "without doubt",
+    "no doubt",
+    "considering",            # dual-use: kept from original for verification context
 ]
 
 # ---------------------------------------------------------------------------

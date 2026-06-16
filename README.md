@@ -173,7 +173,7 @@ Naïve hedge-word counting would penalise this trace even though the uncertainty
 immediately resolved. The proximity metric detects this pattern and reduces the
 uncertainty weight of resolved hedges proportionally to match quality.
 
-### 8-Step Pipeline
+### 9-Step Pipeline
 
 | Step | Description |
 |------|-------------|
@@ -185,6 +185,7 @@ uncertainty weight of resolved hedges proportionally to match quality.
 | 6 | **Match score** — `0.7 × similarity + 0.3 × proximity` |
 | 7 | **Resolution** — best-match verification per hedge; resolved if `match_score ≥ 0.60` |
 | 8 | **Weight adjustment** — resolved: `eff_weight = 1 − 0.8 × match_score`; unresolved: `1.0` |
+| 9 | **Certainty Prediction** — binary `Certain`/`Uncertain` label based on 45% HVR (Hedge-to-Verify Ratio), 25% Position, 15% TRUR, 15% Conclusion Finality |
 
 ### Public API
 
@@ -210,6 +211,11 @@ result = calculate_proximity_metrics(
   "unresolved_hedges": 2,
   "trur": 0.3333,
   "weighted_trur": 0.2651,
+  "total_verifications": 4,
+  "hvr": 0.75,
+  "late_unresolved_ratio": 0.6667,
+  "conclusion_finality": -0.2,
+  "predicted_certainty": "Uncertain",
   "matches": [
     {
       "id": "H1",
@@ -240,10 +246,13 @@ result = calculate_proximity_metrics(
 
 | Field | Description |
 |-------|-------------|
-| `sentence` | The full sentence that triggered hedge detection |
-| `matched_keyword` | The specific keyword that fired the hedge detector |
 | `trur` | Topic-Resolved Uncertainty Ratio — `resolved / total` |
 | `weighted_trur` | Mean weight reduction across all hedges |
+| `total_verifications` | Raw count of verification markers detected in the trace |
+| `hvr` | Hedge-to-Verify Ratio (`total_hedges / max(1, total_verifications)`) |
+| `late_unresolved_ratio` | Fraction of unresolved hedges appearing in the second half of the trace |
+| `conclusion_finality` | Lexical scoring of finality in the concluding sentences (-1 to 1) |
+| `predicted_certainty` | Binary classifier output: `"Certain"` or `"Uncertain"` |
 | `effective_weight` | Per-hedge uncertainty contribution after resolution adjustment |
 
 ### Supported Embedding Models

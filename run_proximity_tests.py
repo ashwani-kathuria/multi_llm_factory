@@ -132,6 +132,8 @@ def run_test_case(row: dict, verbose: bool = False) -> dict:
         "unresolved_hedges":     metrics["unresolved_hedges"],
         "trur":                  metrics["trur"],
         "weighted_trur":         metrics["weighted_trur"],
+        "total_verifications":   metrics.get("total_verifications", 0),
+        "hvr":                   metrics.get("hvr", 0.0),
         "late_unresolved_ratio": metrics.get("late_unresolved_ratio", 0.0),
         "conclusion_finality":   metrics.get("conclusion_finality", 0.0),
         "predicted_certainty":   metrics.get("predicted_certainty", "?"),
@@ -157,9 +159,11 @@ _HEADER_ROW = (
     f"{'Category':<12}  "
     f"{'Certainty':<14}  "
     f"{'Expected':<14}  "
-    f"{'TotalHedges':>11}  "
+    f"{'TotHedges':>9}  "
     f"{'Resolved':>8}  "
-    f"{'TRUR':>8}  "
+    f"{'TotVerif':>8}  "
+    f"{'HVR':>6}  "
+    f"{'TRUR':>7}  "
     f"{'WtdTRUR':>8}  "
     f"{'Predicted':<12}  "
     f"{'ms':>7}"
@@ -174,9 +178,11 @@ def _format_result_row(r: dict) -> str:
         f"{r['Category']:<12}  "
         f"{r['CertaintyLevel']:<14}  "
         f"{r['ExpectedLabel']:<14}  "
-        f"{r['total_hedges']:>11}  "
+        f"{r['total_hedges']:>9}  "
         f"{r['resolved_hedges']:>8}  "
-        f"{r['trur']:>7.1%}  "
+        f"{r['total_verifications']:>8}  "
+        f"{r['hvr']:>6.2f}  "
+        f"{r['trur']:>6.1%}  "
         f"{r['weighted_trur']:>7.1%}  "
         f"{predicted:<12}  "
         f"{r['elapsed_ms']:>7.1f}"
@@ -235,9 +241,9 @@ def _print_group_breakdown(
     header = (
         f"\n  {label}\n"
         f"  {'Group':<{col_g}}  {'Cases':>5}  {'AvgHedges':>9}  "
-        f"{'AvgResolved':>11}  {'AvgTRUR':>7}  {'AvgWtdTRUR':>10}"
+        f"{'AvgResolved':>11}  {'AvgVerif':>8}  {'AvgHVR':>6}  {'AvgTRUR':>7}  {'AvgWtdTRUR':>10}"
     )
-    sep = "  " + "-" * (col_g + 52)
+    sep = "  " + "-" * (col_g + 70)
 
     print(header, file=out)
     print(sep, file=out)
@@ -247,11 +253,13 @@ def _print_group_breakdown(
         n   = len(grp)
         avg_h  = sum(r["total_hedges"]    for r in grp) / n
         avg_rs = sum(r["resolved_hedges"] for r in grp) / n
+        avg_v  = sum(r.get("total_verifications", 0) for r in grp) / n
+        avg_hvr= sum(r.get("hvr", 0.0) for r in grp) / n
         avg_t  = sum(r["trur"]            for r in grp) / n
         avg_wt = sum(r["weighted_trur"]   for r in grp) / n
         print(
             f"  {key:<{col_g}}  {n:>5}  {avg_h:>9.2f}  "
-            f"{avg_rs:>11.2f}  {avg_t:>7.1%}  {avg_wt:>10.1%}",
+            f"{avg_rs:>11.2f}  {avg_v:>8.2f}  {avg_hvr:>6.2f}  {avg_t:>7.1%}  {avg_wt:>10.1%}",
             file=out,
         )
 

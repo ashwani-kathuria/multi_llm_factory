@@ -743,60 +743,58 @@ def _predict_certainty(
     trur: float,
     late_unresolved: float,
     finality: float,
+    hvr: float,
 ) -> str:
     """
-    Combine TRUR, late-unresolved ratio, and conclusion finality into a
-    predicted certainty label.
+    Combine TRUR, HVR, late-unresolved ratio and conclusion finality into a
+    binary certainty label: ``"Certain"`` or ``"Uncertain"``.
 
     Composite score (0 → 1, higher = more certain):
-      40 % — TRUR (resolution rate)
-      35 % — early-unresolved pattern  (1 − late_unresolved_ratio)
-      25 % — conclusion finality       (normalised to [0, 1])
+      45 % — HVR certainty  1 / (1 + HVR); HVR = hedges / verifications
+                            low ratio (few hedges vs many verifications) → Certain
+                            high ratio (many hedges vs few verifications) → Uncertain
+      25 % — Position       fraction of unresolved hedges in the first half (early = Certain)
+      15 % — TRUR           resolution rate (resolved / total hedges)
+      15 % — Finality       definitive vs uncertain conclusion language
 
     Fixes applied
     ─────────────
     Fix 1 — Hedge density guard:
-      With fewer than 3 detected hedges the TRUR signal is statistically
-      unreliable: a single accidental keyword match flips TRUR to 50-100%.
-      In this case the prediction is capped at "Ambiguous" — never "Certain".
+      With fewer than 3 detected hedges there is insufficient signal to
+      predict "Certain" reliably — force "Uncertain".
 
     Fix 2 — Finality gate:
-      When no hedge was resolved (TRUR = 0), definitive conclusion language
-      alone cannot push the prediction to "Certain". The finality weight is
-      reduced from 0.25 → 0.10 and the freed 0.15 is redistributed to the
-      position signal, which is a more reliable indicator in the zero-TRUR case.
+      When no hedge was resolved (TRUR = 0), conclusion language alone cannot
+      push the prediction to "Certain". Finality weight drops 15 % → 5 % and
+      the freed weight redistributes to the position signal.
 
-    Thresholds:
-      ≥ 0.55 → "Certain"   (only reachable with total_hedges ≥ 3)
-      ≥ 0.35 → "Ambiguous"
-       < 0.35 → "Uncertain"
+    Threshold:
+      score ≥ 0.50 → "Certain"
+      score  < 0.50 → "Uncertain"
     """
+    # Fix 1: insufficient hedge count — force Uncertain
+    if total_hedges < 3:
+        return "Uncertain"
+
     # Fix 2: gate finality weight on whether any hedge was actually resolved
     if trur > 0:
-        finality_weight = 0.25
-        position_weight = 0.35
+        finality_weight = 0.15
+        position_weight = 0.25
     else:
-        # No resolution detected — demote finality, promote position signal
-        finality_weight = 0.10
-        position_weight = 0.50
+        # No resolution — demote finality, promote position signal
+        finality_weight = 0.05
+        position_weight = 0.35
+
+    hvr_certainty = 1.0 / (1.0 + hvr)   # maps HVR [0, ∞) → (0, 1]
 
     score = (
-        trur                      * 0.40
+        trur                      * 0.15
+        + hvr_certainty           * 0.45
         + (1.0 - late_unresolved) * position_weight
         + ((finality + 1.0) / 2.0) * finality_weight   # map [-1,1] → [0,1]
     )
 
-    # Fix 1: with < 3 detected hedges we don't have enough signal to commit
-    # to an extreme label — cap at Ambiguous regardless of score
-    if total_hedges < 3:
-        return "Ambiguous" if score >= 0.35 else "Uncertain"
-
-    if score >= 0.55:
-        return "Certain"
-    elif score >= 0.35:
-        return "Ambiguous"
-    else:
-        return "Uncertain"
+    return "Certain" if score >= 0.50 else "Uncertain"
 
 
 # ---------------------------------------------------------------------------
@@ -889,19 +887,22 @@ def calculate_proximity_metrics(
     )
 
     if not hedges:
-        # No hedge case — classify as Certain (pending future calibration)
-        logger.info("[proximity_metric] No hedges detected — returning 'Certain*' label.")
-        finality = _conclusion_finality(sentences)
+        # No hedge case — classify as Certain (no expressed uncertainty detected)
+        logger.info("[proximity_metric] No hedges detected — classifying as Certain.")
+        total_vers = len(verifications)
+        finality   = _conclusion_finality(sentences)
         return {
-            "total_hedges":        0,
-            "resolved_hedges":     0,
-            "unresolved_hedges":   0,
-            "trur":                0.0,
-            "weighted_trur":       0.0,
+            "total_hedges":          0,
+            "resolved_hedges":       0,
+            "unresolved_hedges":     0,
+            "trur":                  0.0,
+            "weighted_trur":         0.0,
+            "total_verifications":   total_vers,
+            "hvr":                   0.0,
             "late_unresolved_ratio": 0.0,
-            "conclusion_finality": round(finality, 4),
-            "predicted_certainty": "Certain*",  # no hedges — TODO: calibrate
-            "matches":             [],
+            "conclusion_finality":   round(finality, 4),
+            "predicted_certainty":   "Certain",
+            "matches":               [],
         }
 
     # --- Step 3: Extract subjects ---
@@ -952,10 +953,12 @@ def calculate_proximity_metrics(
         matches.append(record)
 
     # --- Step 9: Certainty classification ---
+    total_vers       = len(verifications)
+    hvr              = round(total / max(1, total_vers), 4)   # hedge-to-verify ratio
     total_sents      = len(sentences)
     late_unresolved  = _late_unresolved_ratio(results, total_sents)
     finality         = _conclusion_finality(sentences)
-    predicted        = _predict_certainty(total, trur, late_unresolved, finality)
+    predicted        = _predict_certainty(total, trur, late_unresolved, finality, hvr)
 
     return {
         "total_hedges":          total,
@@ -963,6 +966,8 @@ def calculate_proximity_metrics(
         "unresolved_hedges":     unresolved,
         "trur":                  trur,
         "weighted_trur":         weighted_trur,
+        "total_verifications":   total_vers,
+        "hvr":                   hvr,
         "late_unresolved_ratio": late_unresolved,
         "conclusion_finality":   round(finality, 4),
         "predicted_certainty":   predicted,
